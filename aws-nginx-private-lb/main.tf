@@ -43,20 +43,6 @@ module "jumphost_security_group" {
   tags = var.resource_tags
 }
 
-module "lb_security_group" {
-  source  = "terraform-aws-modules/security-group/aws//modules/web"
-  version = "3.17.0"
-
-  name        = "lb-sg-mdwlab-dev"
-  description = "Security group for load balancer with HTTP ports open within VPC"
-  vpc_id      = module.vpc.vpc_id
-
-  ingress_cidr_blocks = ["0.0.0.0/0"]
-
-  tags = var.resource_tags
-}
-
-
 
 module "app_security_group1" {
   source  = "terraform-aws-modules/security-group/aws//modules/http-80"
@@ -66,13 +52,7 @@ module "app_security_group1" {
   description = "Security group for web-servers with HTTP ports open within Load Balancer"
   vpc_id      = module.vpc.vpc_id
   ingress_cidr_blocks = module.vpc.public_subnets_cidr_blocks
-  computed_ingress_with_source_security_group_id = [
-    {
-      rule = "http-80-tcp"
-      source_security_group_id = module.lb_security_group.this_security_group_id
-    }
-  ]
-  number_of_computed_ingress_with_source_security_group_id = 1
+  
   tags = var.resource_tags
 }
 
@@ -94,34 +74,35 @@ resource "random_string" "lb_id" {
 }
 
 module "elb_http" {
-  source  = "terraform-aws-modules/elb/aws"
-  version = "2.4.0"
+  source  = "terraform-aws-modules/alb/aws"
+  version = "~> 5.0"
 
   # Ensure load balancer name is unique
-  name = "lb-${random_string.lb_id.result}-mdwlab-dev"
+  name = "nlb-${random_string.lb_id.result}-mdwlab-dev"
+  load_balancer_type = "network"
 
   internal = true
 
-  security_groups = [module.lb_security_group.this_security_group_id]
+  vpc_id      = module.vpc.vpc_id
   subnets         = module.vpc.private_subnets
 
-  number_of_instances = length(module.ec2_instances.instance_ids)
-  instances           = module.ec2_instances.instance_ids
+  target_groups = [
+    {
+      name_prefix      = "pref-"
+      backend_protocol = "TCP"
+      backend_port     = 80
+      target_type      = "ip"
+    }
+  ]
 
-  listener = [{
-    instance_port     = "80"
-    instance_protocol = "HTTP"
-    lb_port           = "80"
-    lb_protocol       = "HTTP"
-  }]
+  http_tcp_listeners = [
+    {
+      port               = 80
+      protocol           = "TCP"
+      target_group_index = 0
+    }
+  ]
 
-  health_check = {
-    target              = "HTTP:80/index.html"
-    interval            = 10
-    healthy_threshold   = 3
-    unhealthy_threshold = 10
-    timeout             = 5
-  }
 
   tags = var.resource_tags
 }
